@@ -352,7 +352,9 @@ postgres=# SELECT pg_size_pretty(pg_total_relation_size('book'));
 - При обновлении старая строчка помечается на удаление и создается новая. Поэтому объем только увеличивался
 
 - Задание со * . Написать функцию
+
 ```
+
 do $$declare i integer;
 begin
 	FOR i IN 1..10
@@ -360,4 +362,5 @@ begin
 			update book set name = concat('name',i);
 		END loop;
 end$$;
+
 ```
