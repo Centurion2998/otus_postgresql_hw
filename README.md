@@ -94,3 +94,161 @@ postgres=# SELECT pg_current_wal_lsn(), pg_current_wal_insert_lsn();
 - Проверьте данные статистики: все ли контрольные точки выполнялись точно по расписанию. Почему так произошло? - да, всё точно по расписанию, но могли и чаще, если бы был превышен max_wal_size. Но установлен в 1 GB. Его превышения не произошло, нагрузка была недостаточно интеснсивной.
 - Сравните tps в синхронном/асинхронном режиме утилитой pgbench. Объясните полученный результат. - Синхронный 404 tps. Асинхронный - 3079 tps. Мы получили буст производительности за счёт того, что запись с WAL на диск происходит в асинхронном режиме, то есть изменения в транзакции пишутся лишь в wal, а уже на диск персистятся асинхронно, в фонек.
 - Создайте новый кластер с включенной контрольной суммой страниц. Создайте таблицу. Вставьте несколько значений. Выключите кластер. Измените пару байт в таблице. Включите кластер и сделайте выборку из таблицы. Что и почему произошло? как проигнорировать ошибку и продолжить работу? - Ошибки не было, просто была пустая выборка. 
+
+
+- ( Доработка )
+- Создаем новый кластер
+
+```
+midly@midly-VirtualBox:~$ sudo pg_createcluster 14 sec_cluster -- --data-checksums
+
+[sudo] пароль для midly: 
+
+Creating new PostgreSQL cluster 14/sec_cluster ...
+
+/usr/lib/postgresql/14/bin/initdb -D /var/lib/postgresql/14/sec_cluster --auth-local peer --auth-host scram-sha-256 --no-instructions --data-checksums
+
+Файлы, относящиеся к этой СУБД, будут принадлежать пользователю "postgres".
+
+От его имени также будет запускаться процесс сервера.
+
+
+
+Кластер баз данных будет инициализирован с локалью "ru_RU.UTF-8".
+
+Кодировка БД по умолчанию, выбранная в соответствии с настройками: "UTF8".
+
+Выбрана конфигурация текстового поиска по умолчанию "russian".
+
+
+
+Контроль целостности страниц данных включён.
+
+
+
+исправление прав для существующего каталога /var/lib/postgresql/14/sec_cluster... ок
+
+создание подкаталогов... ок
+
+выбирается реализация динамической разделяемой памяти... posix
+
+выбирается значение max_connections по умолчанию... 100
+
+выбирается значение shared_buffers по умолчанию... 128MB
+
+выбирается часовой пояс по умолчанию... Europe/Moscow
+
+создание конфигурационных файлов... ок
+
+выполняется подготовительный скрипт... ок
+
+выполняется заключительная инициализация... ок
+
+сохранение данных на диске... ок
+
+Ver Cluster     Port Status Owner    Data directory                     Log file
+
+14  sec_cluster 5437 down   postgres /var/lib/postgresql/14/sec_cluster /var/log/postgresql/postgresql-14-sec_cluster.log
+
+
+
+```
+
+- Кластер создался на порте 5437 . Запустим его
+
+```
+midly@midly-VirtualBox:~$ sudo pg_ctlcluster 14 sec_cluster start
+sudo -u postgres psql -p5437
+
+postgres=# select setting from pg_settings where name='data_checksums';
+
+ setting 
+
+---------
+
+ on
+
+(1 row)
+
+```
+
+- Создал новую базу, тестовую таблицу и наполнил данными , плюс определяем файл в котором хранится таблица
+
+```
+ostgres=# create database checksum;
+
+CREATE DATABASE
+
+postgres=# \c checksum;
+
+psql (15.7 (Ubuntu 15.7-1.pgdg22.04+1), server 14.12 (Ubuntu 14.12-1.pgdg22.04+1))
+
+You are now connected to database "checksum" as user "postgres".
+
+checksum=# create table test (id int);
+
+CREATE TABLE
+
+checksum=#  insert into test select* from generate_series(1, 100);
+
+INSERT 0 100
+
+checksum=# select pg_relation_filepath('test');
+
+ pg_relation_filepath 
+
+----------------------
+
+ base/16384/16385
+
+(1 row)
+
+
+```
+
+- Остановил кластер, внес изменения в файл и снова запустил
+
+```
+midly@midly-VirtualBox:~$ sudo pg_ctlcluster 14 sec_cluster stop
+midly@midly-VirtualBox:~$ sudo nano /var/lib/postgresql/14/sec_cluster/base/16384/16385
+midly@midly-VirtualBox:~$ sudo pg_ctlcluster 14 second start
+```
+
+- При обращение к таблице возникает ошибка, последствие внесенного изменения в файл
+```
+checksum=# select* from test limit 10;
+
+ПРЕДУПРЕЖДЕНИЕ:  ошибка проверки страницы: получена контрольная сумма 25330, а ожидалась - 40705
+
+ОШИБКА:  неверная страница в блоке 0 отношения base/16384/16385
+```
+
+- Для решения проблемы, воспользуемся игнорированием контрольной суммы. Что помогает устранить ошибку 
+  
+```
+checksum=# alter system set ignore_checksum_failure=on;
+ALTER SYSTEM
+
+checksum=# select pg_reload_conf();
+ pg_reload_conf
+----------------
+ t
+(1 row)
+
+checksum=# select* from test limit 10;
+ id
+----
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+ 13
+(10 rows)
+```
+
+
