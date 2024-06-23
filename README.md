@@ -168,5 +168,76 @@ good_name	             |     sum
 Спички хозайственные	     |      67
 ```
 
+- Доработка. Изменил код тригера , и добавил уникальность для стобца good_name в таблице good_sum_mart  
+
+```
+alter table good_sum_mart add unique(good_name);
+
+
+CREATE OR REPLACE FUNCTION tg_sales()
+RETURNS trigger
+AS
+$$
+DECLARE
+    v_summa  numeric(16, 2);
+    v_summa_del numeric(16, 2);
+    v_name   text;
+
+BEGIN
+    
+CASE TG_OP 
+WHEN 'INSERT' then
+
+SELECT G.good_name, (G.good_price * NEW.sales_qty) as sum_sale
+into v_name,v_summa
+FROM goods G
+WHERE G.goods_id = NEW.goods_id;
+
+if not exists (select 1 from good_sum_mart GM inner join goods G on G.good_name= GM.good_name where G.goods_id = new.goods_id)
+	then 
+		insert into good_sum_mart(good_name,sum_sale) 
+		select good_name,0 
+	    from goods 
+	    where goods_id = new.goods_id;
+	end if;
+
+update  good_sum_mart
+set sum_sale = sum_sale + v_summa
+where good_name = v_name;
+
+RETURN NEW;
+
+WHEN 'UPDATE' THEN
+
+SELECT G.good_name, (G.good_price * NEW.sales_qty), (G.good_price * OLD.sales_qty)
+INTO v_name,v_summa,v_summa_del
+FROM goods G
+WHERE G.goods_id = OLD.goods_id;
+
+UPDATE good_sum_mart
+SET sum_sale = sum_sale + v_summa - v_summa_del
+WHERE good_name = v_name;
+
+RETURN NEW;
+
+WHEN 'DELETE' THEN
+       
+SELECT G.good_name, (G.good_price * OLD.sales_qty)
+INTO v_name , v_summa_del
+FROM goods G
+WHERE G.goods_id = OLD.goods_id;   
+
+update  good_sum_mart
+set sum_sale = sum_sale - v_summa_del
+where good_name = v_name;
+
+
+END CASE;
+
+END;
+$$ 
+LANGUAGE plpgsql
+```
+
 
 
